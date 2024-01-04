@@ -30,6 +30,8 @@
 // The same applies to videostreams.
 
 mod diff_plugin;
+mod border;
+mod rgb2gray;
 
 use std::{
     env,
@@ -38,7 +40,7 @@ use std::{
 
 use anyhow::Error;
 use derive_more::{Display, Error};
-use diff_plugin::{SimpleTrans, register};
+
 use gst::{element_error, element_warning, prelude::*};
 
 #[derive(Debug, Display, Error)]
@@ -57,12 +59,16 @@ fn example_main() -> Result<(), Error> {
     gst::init()?;
 
     diff_plugin::plugin_register_static()?;
+    border::plugin_register_static()?;
+    rgb2gray::plugin_register_static()?;
 
     let args: Vec<_> = env::args().collect();
     let uri: &str = if args.len() == 2 {
         args[1].as_ref()
     } else {
-        "D:\\movie\\空挺ドラゴン\\Kuutei1.mp4"
+        // "D:\\movie\\空挺ドラゴン\\Kuutei1.mp4"
+        // "/home/disshone/workspace/movie.mp4"
+        "/home/disshone/workspace/Kuutei1.mp4"
     };
 
     let pipeline = gst::Pipeline::default();
@@ -166,85 +172,53 @@ fn example_main() -> Result<(), Error> {
                 );
                 let sink_pad = queue.static_pad("sink").expect("queue has no sinkpad");
                 tee_video_pad.link(&sink_pad)?;
-
-                let queue = gst::ElementFactory::make("queue").build()?;
-                let convert = gst::ElementFactory::make("audioconvert").build()?;
-                let resample = gst::ElementFactory::make("audioresample").build()?;
-                resample.set_property("quality", 0);
-                let equalizer = gst::ElementFactory::make("equalizer-10bands").build()?;
-                // equalizer.set_property("band0", -24.0f64);
-                // equalizer.set_property("band1", 0.0f64);
-                // equalizer.set_property("band2", -2.0f64);
-                // equalizer.set_property("band3", -5.0f64);
-                // equalizer.set_property("band4", -24.0f64);
-                // equalizer.set_property("band5", -24.0f64);
-                // equalizer.set_property("band6", -24.0f64);
-                // equalizer.set_property("band7", -24.0f64);
-                // equalizer.set_property("band8", -24.0f64);
-                // equalizer.set_property("band9", -24.0f64);
-                let spacescope = gst::ElementFactory::make("spacescope").build()?;
-                let sink = gst::ElementFactory::make("autovideosink").build()?;
-
-                let elements = &[&queue, &convert, &resample, &equalizer, &spacescope, &sink];
-                pipeline.add_many(elements)?;
-                gst::Element::link_many(elements)?;
-
-                for e in elements {
-                    e.sync_state_with_parent()?;
-                }
-
-                let tee_video_pad = tee.request_pad_simple("src_%u").unwrap();
-                println!(
-                    "Obtained request pad {} for video branch",
-                    tee_video_pad.name()
-                );
-                let sink_pad = queue.static_pad("sink").expect("queue has no sinkpad");
-                tee_video_pad.link(&sink_pad)?;
             } else if is_video {
                 let tee = gst::ElementFactory::make("tee").build()?;
                 pipeline.add(&tee)?;
                 tee.sync_state_with_parent()?;
                         
-                let sink_pad = tee.static_pad("sink").expect("queue has no sinkpad");
-                src_pad.link(&sink_pad)?;
+                let tee_sink_pad = tee.static_pad("sink").expect("queue has no sinkpad");
+                src_pad.link(&tee_sink_pad)?;
+
+                // -----
+                // decodebin found a raw videostream, so we build the follow-up pipeline to
+                // display it using the autovideosink.
+                // let queue = gst::ElementFactory::make("queue").build()?;
+                // let convert = gst::ElementFactory::make("videoconvert").build()?;
+                // let scale = gst::ElementFactory::make("videoscale").build()?;
+                
+                // let sink = gst::ElementFactory::make("autovideosink").build()?;
+
+                // let elements = &[&queue, &convert, &scale, &sink];
+                // pipeline.add_many(elements)?;
+                // gst::Element::link_many(elements)?;
+
+                // for e in elements {
+                //     e.sync_state_with_parent()?
+                // }
+
+                // let tee_video_pad = tee.request_pad_simple("src_%u").unwrap();
+                // println!(
+                //     "Obtained request pad {} for video branch",
+                //     tee_video_pad.name()
+                // );
+                // let sink_pad = queue.static_pad("sink").expect("queue has no sinkpad");
+                // tee_video_pad.link(&sink_pad)?;
 
                 // -----
                 // decodebin found a raw videostream, so we build the follow-up pipeline to
                 // display it using the autovideosink.
                 let queue = gst::ElementFactory::make("queue").build()?;
-                let convert = gst::ElementFactory::make("videoconvert").build()?;
-                let scale = gst::ElementFactory::make("videoscale").build()?;
-                
-                let sink = gst::ElementFactory::make("autovideosink").build()?;
-
-                let elements = &[&queue, &convert, &scale, &sink];
-                pipeline.add_many(elements)?;
-                gst::Element::link_many(elements)?;
-
-                for e in elements {
-                    e.sync_state_with_parent()?
-                }
-
-                let tee_video_pad = tee.request_pad_simple("src_%u").unwrap();
-                println!(
-                    "Obtained request pad {} for video branch",
-                    tee_video_pad.name()
-                );
-                let sink_pad = queue.static_pad("sink").expect("queue has no sinkpad");
-                tee_video_pad.link(&sink_pad)?;
-
-                // -----
-                // decodebin found a raw videostream, so we build the follow-up pipeline to
-                // display it using the autovideosink.
-                let queue = gst::ElementFactory::make("queue").build()?;
-                let convert = gst::ElementFactory::make("videoconvert").build()?;
-                let scale = gst::ElementFactory::make("videoscale").build()?;
-                
                 let videorate = gst::ElementFactory::make("simpletrans").build()?;
+                // videorate.set_property("border-radius-px", 5u32);
+                let convert = gst::ElementFactory::make("videoconvert").build()?;
+                let convert2 = gst::ElementFactory::make("videoconvert").build()?;
+                let scale = gst::ElementFactory::make("videoscale").build()?;
+                
                 
                 let sink = gst::ElementFactory::make("autovideosink").build()?;
 
-                let elements = &[&queue, &convert, &scale, &videorate, &sink];
+                let elements = &[&queue, &convert2,  &videorate, &convert, &sink];
                 pipeline.add_many(elements)?;
                 gst::Element::link_many(elements)?;
 
@@ -261,7 +235,7 @@ fn example_main() -> Result<(), Error> {
                 tee_video_pad.link(&sink_pad)?;
 
             }
-
+            println!("todo: insert_sink complete. {} {}", is_audio, is_video);
             Ok(())
         };
 
@@ -276,6 +250,7 @@ fn example_main() -> Result<(), Error> {
         if let Err(err) = insert_sink(is_audio, is_video) {
             // The following sends a message of type Error on the bus, containing our detailed
             // error information.
+            eprintln!("error: {:?}", err);
             element_error!(
                 dbin,
                 gst::LibraryError::Failed,
@@ -286,7 +261,12 @@ fn example_main() -> Result<(), Error> {
                             .build()
             );
         }
+
+        println!("todo2 ");
+
     });
+
+    println!("todo3 ");
 
     pipeline.set_state(gst::State::Playing)?;
 
@@ -305,7 +285,7 @@ fn example_main() -> Result<(), Error> {
             MessageView::Eos(..) => break,
             MessageView::Error(err) => {
                 pipeline.set_state(gst::State::Null)?;
-
+                eprintln!("error: {:?}", err);
                 match err.details() {
                     // This bus-message of type error contained our custom error-details struct
                     // that we sent in the pad-added callback above. So we unpack it and log
@@ -334,17 +314,19 @@ fn example_main() -> Result<(), Error> {
                 }?;
             }
             MessageView::StateChanged(s) => {
-                println!(
-                    "State changed from {:?}: {:?} -> {:?} ({:?})",
-                    s.src().map(|s| s.path_string()),
-                    s.old(),
-                    s.current(),
-                    s.pending()
-                );
+                // println!(
+                //     "State changed from {:?}: {:?} -> {:?} ({:?})",
+                //     s.src().map(|s| s.path_string()),
+                //     s.old(),
+                //     s.current(),
+                //     s.pending()
+                // );
             }
             _ => (),
         }
     }
+
+    println!("bus finish.");
 
     pipeline.set_state(gst::State::Null)?;
 
@@ -356,6 +338,6 @@ fn main() {
     // (but not necessary in normal Cocoa applications where this is set up automatically)
     match example_main() {
         Ok(r) => r,
-        Err(e) => eprintln!("Error! {e}"),
+        Err(e) => eprintln!("Error! --- {:?}", e),
     }
 }
